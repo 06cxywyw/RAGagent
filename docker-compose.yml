@@ -1,0 +1,42 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: rag-pgvector
+    environment:
+      POSTGRES_DB: ${DB_NAME:-ai_agent}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-123456}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: rag-app
+    ports:
+      - "8123:8123"
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-ai_agent}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-123456}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_URL: ${LLM_URL}
+      LLM_MODEL: ${LLM_MODEL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

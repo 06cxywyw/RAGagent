@@ -1,0 +1,86 @@
+# JavaGuide - 计算机网络
+
+> 来源: https://javaguide.cn/cs-basics/network/http-status-codes.html
+
+# HTTP 常见状态码总结（应用层）
+[Guide](https://javaguide.cn/article/)计算机基础计算机网络约 1194 字大约 4 分钟HTTP 状态码是服务端返回给客户端的处理结果摘要。看到一个状态码，基本就能判断请求是成功、重定向、客户端出错，还是服务端出错。
+
+状态码看起来只是数字，但很多码很容易混淆：比如 301 和 302、401 和 403、500 和 502、201 和 204。
+
+这篇文章主要回答几个问题：
+
+- 1xx、2xx、3xx、4xx、5xx 分别代表什么类型的结果？
+- 常见成功状态码如 200、201、204 有什么区别？
+- 常见客户端错误如 400、401、403、404 应该怎么理解？
+- 常见服务端错误如 500、502、503、504 通常意味着什么？
+
+![常见 HTTP 状态码](https://oss.javaguide.cn/github/javaguide/cs-basics/network/http-status-code.png)
+
+---
+### 1xx Informational（信息性状态码）
+相比于其他类别状态码来说，1xx 你平时你大概率不会碰到，所以这里直接跳过。
+
+---
+### 2xx Success（成功状态码）
+
+- 200 OK：请求被成功处理。例如，发送一个查询用户数据的 HTTP 请求到服务端，服务端正确返回了用户数据。这个是我们平时最常见的一个 HTTP 状态码。
+- 201 Created：请求被成功处理并且在服务端创建了一个新的资源。例如，通过 POST 请求创建一个新的用户。
+- 202 Accepted：服务端已经接收到了请求，但是还未处理。例如，发送一个需要服务端花费较长时间处理的请求（如报告生成、Excel 导出），服务端接收了请求但尚未处理完毕。
+- 204 No Content：服务端已经成功处理了请求，但是没有返回任何内容。例如，发送请求删除一个用户，服务器成功处理了删除操作但没有返回任何内容。
+
+🐛 修正（参见：[issue#2458](https://github.com/Snailclimb/JavaGuide/issues/2458)）：201 Created 状态码更准确点来说是创建一个或多个新的资源，可以参考：[https://httpwg.org/specs/rfc9110.html#status.201](https://httpwg.org/specs/rfc9110.html#status.201)。
+
+![](https://oss.javaguide.cn/github/javaguide/cs-basics/network/rfc9110-201-created.png)
+
+这里格外提一下 204 状态码，平时学习/工作中见到的次数并不多。
+
+[HTTP RFC 2616 对 204 状态码的描述](https://tools.ietf.org/html/rfc2616#section-10.2.5)如下：
+
+The server has fulfilled the request but does not need to return anentity-body, and might want to return updated metainformation. Theresponse MAY include new or updated metainformation in the form ofentity-headers, which if present SHOULD be associated with therequested variant.
+
+If the client is a user agent, it SHOULD NOT change its document viewfrom that which caused the request to be sent. This response isprimarily intended to allow input for actions to take place withoutcausing a change to the user agent's active document view, althoughany new or updated metainformation SHOULD be applied to the documentcurrently in the user agent's active view.
+
+The 204 response MUST NOT include a message-body, and thus is alwaysterminated by the first empty line after the header fields.
+
+简单来说，204 状态码描述的是我们向服务端发送 HTTP 请求之后，只关注处理结果是否成功的场景。也就是说我们需要的就是一个结果：true/false。
+
+举个例子：你要追一个女孩子，你问女孩子：“我能追你吗？”，女孩子回答：“好！”。我们把这个女孩子当做是服务端就很好理解 204 状态码了。
+
+---
+### 3xx Redirection（重定向状态码）
+
+- 301 Moved Permanently：资源被永久重定向了。比如你的网站的网址更换了。
+- 302 Found：资源被临时重定向了。比如你的网站的某些资源被暂时转移到另外一个网址。
+
+---
+### 4xx Client Error（客户端错误状态码）
+
+- 400 Bad Request：发送的 HTTP 请求存在问题。比如请求参数不合法、请求方法错误。
+- 401 Unauthorized：未认证却请求需要认证之后才能访问的资源。
+- 403 Forbidden：直接拒绝 HTTP 请求，不处理。一般用来针对非法请求。
+- 404 Not Found：你请求的资源未在服务端找到。比如你请求某个用户的信息，服务端并没有找到指定的用户。
+- 409 Conflict：表示请求的资源与服务端当前的状态存在冲突，请求无法被处理。
+
+---
+### 5xx Server Error（服务端错误状态码）
+
+- 500 Internal Server Error：服务端出问题了（通常是服务端出 Bug 了）。比如你服务端处理请求的时候突然抛出异常，但是异常并未在服务端被正确处理。
+- 502 Bad Gateway：我们的网关将请求转发到服务端，但是服务端返回的却是一个错误的响应。
+
+---
+### 参考
+
+- [https://www.restapitutorial.com/httpstatuscodes.html](https://www.restapitutorial.com/httpstatuscodes.html)
+- [https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Status](https://developer.mozilla.org/zh-CN/docs/Web/HTTP/Status)
+- [https://en.wikipedia.org/wiki/List_of_HTTP_status_codes](https://en.wikipedia.org/wiki/List_of_HTTP_status_codes)
+- [https://segmentfault.com/a/1190000018264501](https://segmentfault.com/a/1190000018264501)
+
+---
+## 写在最后
+感谢你能看到这里，也希望这篇文章对你有点用。
+
+JavaGuide 坚持更新 6 年多，近 6000 次提交、600+ 位贡献者一起打磨。如果这些内容对你有帮助，非常欢迎点个免费的 Star 支持下（完全自愿，觉得有收获再点就好）：[GitHub](https://github.com/Snailclimb/JavaGuide)|[Gitee](https://gitee.com/SnailClimb/JavaGuide)。
+
+如果你想要付费支持/面试辅导（比如实战项目、简历优化、一对一提问、高频考点突击资料等）的话，欢迎了解我的[知识星球](https://javaguide.cn/about-the-author/zhishixingqiu-two-years.html)。已经坚持维护六年，内容持续更新，虽白菜价（0.4元/天）但质量很高，主打一个良心！
+
+![JavaGuide 公众号](https://oss.javaguide.cn/github/javaguide/gongzhonghao-javaguide.png)

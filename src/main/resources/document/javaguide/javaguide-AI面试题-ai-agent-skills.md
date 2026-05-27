@@ -1,0 +1,197 @@
+# JavaGuide - AI面试题
+
+> 来源: https://javaguide.cn/ai/agent/skills.html
+
+# Agent Skills 是什么？和 Prompt、MCP 到底差在哪？
+[Guide](https://javaguide.cn/article/)AI 应用开发约 4411 字大约 15 分钟2025 年前后，MCP 已经把“工具怎么接进来”这个问题炒得很热，后面 Agent Skills 又冒出来，很多人第一反应都是：这不还是提示词吗？
+
+这个疑问挺正常。因为 Skills 的载体确实经常就是一个 Markdown 文件，里面写规则、流程、示例，看起来和 Prompt、AGENTS.md、.cursorrules没有特别夸张的区别。
+
+但真放到 Agent 工程里看，它们解决的问题不一样。Prompt 更像一次性的意图表达，你让模型“帮我 Review 这段代码”，这句话说完就进入当前会话，后面换个项目、换个上下文，很难稳定复用。MCP 解决的是外部系统接入，文件系统、数据库、GitHub、Slack 这类能力，通过 MCP Server 暴露给宿主，模型才有机会读文件、查数据、调接口。Function Calling 更底层一点，它描述的是模型怎么输出结构化调用意图，比如要调哪个工具、参数怎么填，至于这个工具背后是本地函数、MCP Server，还是某个脚本，那是宿主去执行的事。
+
+Skills 卡在另一个位置：把一类任务的经验、约束和执行顺序沉淀下来，让 Agent 在需要时再读。
+
+这句话比较绕，换个例子就清楚了。团队里经常会有一些“老员工脑子里的规矩”：接口返回格式怎么统一，日志字段怎么打，慢 SQL 怎么查，Review 时先看架构还是先看异常处理。以前这些东西要么散在文档里，要么靠人反复提醒。Skill 做的事情，就是把这些判断写成可被 Agent 发现、按需加载的说明。
+
+所以我更愿意把 Skill 理解成一份“可调用的经验包”，而不是一个神秘的新概念。
+
+这篇文章会把 Skills 拆开讲清楚。全文接近 4300 字，主要看这几块：
+
+- Skill 和 Prompt、Function Calling、MCP 的边界到底在哪，它们在一个真实链路里各自卡什么位置
+- 一个可用的[SKILL.md](http://SKILL.md)具体长什么样，为什么元数据和正文要分开写
+- 延迟加载的设计思路和实际分层策略
+- Skill 数量上来之后，路由怎么做才能选得准
+- 写 Skill 时最容易踩的四个坑和规避方法
+
+---
+## 先把边界讲清楚
+很多文章一上来就把 Prompt、MCP、Function Calling、Skills 做成表格。表格当然清楚，但也很容易让人误以为它们是同一层的四个竞品。
+
+实际上不是。用户说一句“帮我分析这份报表”，这是 Prompt。模型判断需要调用read_file，并生成结构化参数，这是 Function Calling。read_file这个能力如果来自 MCP Server，那 MCP 负责的是连接和协议。至于“分析报表时先看字段含义，再看异常值，最后给业务结论，不要直接堆统计指标”，这才是 Skill 适合放的东西。
+
+放在一个真实链路里，大概是这样：
+
+- 用户提出任务。
+- 宿主把可用 Skills 的简短描述放进上下文。
+- 模型判断当前任务命中了某个 Skill。
+- 宿主再把完整SKILL.md加载进来。
+- 模型按照 Skill 里的流程去调工具、读资料、写结果。
+
+注意这里的重点不是“Skill 会不会调用工具”，而是“它把复杂任务的做法提前写下来”。有的 Skill 全程不需要外部工具，比如代码审查规范；有的 Skill 会一路调 MCP、跑脚本、读参考文件，比如故障排查。这也是为什么我不太建议把 Skill 说成“基于 Function Calling 的封装”。这个说法容易把人带偏。Function Calling 是执行动作时可能用到的底层能力，Skill 本身更像上下文注入机制：Agent 读一份文档，然后把里面的规则纳入后续推理。load_skill()也要这样理解——它不是所有工具里都存在的统一 API 名字，更像一个概念：宿主在合适的时候读取并激活SKILL.md。Claude Code、Cursor、Codex、Copilot 这些工具的触发细节会有差异，别把这个词当成跨平台标准函数。
+
+---
+## 一个 Skill 长什么样？
+最小可用的 Skill 其实很朴素，一个目录，加一个SKILL.md：
+
+```text
+skill-name/
+├── SKILL.md
+├── scripts/
+├── references/
+└── assets/
+```
+SKILL.md一般分两部分。前面是元数据，告诉宿主“我是谁、什么时候该用我”；后面是正文，写具体流程、约束、示例和失败处理。scripts/、references/、assets/不是必需项，但复杂任务经常会用到。
+
+一个最小可用的SKILL.md大概长这样：
+
+```markdown
+---
+name: code-reviewer
+description: Review pull request code quality. Use when the user asks to review
+  code, check a PR, or audit code changes. Covers architecture, exception
+  handling, security, and performance.
+triggers:
+  - "review this code"
+  - "帮我看看这个 PR"
+  - "code review"
+---
+
+## 执行顺序
+
+1. 确认改动范围，超过 500 行先问是否需要拆分
+2. 检查异常处理和日志：是否有裸 catch、关键操作是否缺日志
+3. 检查权限和安全：SQL 拼接、XSS、越权操作
+4. 检查性能热点：循环里的 DB 调用、缺失索引、锁粒度
+5. 给出可直接修改的建议，代码示例优先
+
+---
+## 约束
+
+- 不评审格式和命名，那是 lint 的事
+- 发现严重安全问题时，先报告不要直接修改
+```
+上面这个例子里，description直接写了触发词和边界场景，执行顺序把检查步骤串成固定流程，约束明确了什么不做。模型读完就知道该怎么走，而不是自己发挥。必要时还可以在scripts/放一个 lint 脚本，让 Agent 先跑再基于真实输出判断。
+
+我在项目里更喜欢把这类 Skill 拆小一点：
+
+- api-endpoint-generator：按项目统一响应结构与异常模型生成接口代码
+- database-access-review：检查索引、事务边界、慢查询风险
+- refactor-analysis：先评估影响范围，再给出分步重构方案
+- security-audit：盯 SQL 拼接、XSS、权限绕过这类问题
+
+不要急着做一个“万能工程助手”。这种名字听起来省事，实际最容易把 Agent 搞糊涂——它不知道自己到底该按 Review、重构、排障还是安全审计的标准走。
+
+可以参考几个开源 Skill：
+
+- [Code-Review-Expert](https://github.com/sanyuan0704/code-review-expert)：以代码审查为主，覆盖架构设计、SOLID、安全、性能、异常和边界条件。
+- [Git Commit with Conventional Commits](https://github.com/github/awesome-copilot/blob/main/skills/git-commit/SKILL.md)：根据 diff 生成符合 Conventional Commits 的提交信息。
+- [TDD](https://github.com/obra/superpowers/blob/main/skills/test-driven-development/SKILL.md)：把“先写失败测试，再写最少代码通过测试”这套流程固化下来。
+
+[skills.sh](https://skills.sh/)也可以用来找现成的 Skills。Guide 多提一句，面试或项目交流里，可以顺手说说自己团队参考过哪些开源集合，比如 Superpowers 这类。它比只背概念更像真的用过。
+
+![查找自己需要和热门的 Skiils](https://oss.javaguide.cn/github/javaguide/ai/skills/skillssh.png)
+
+![Superpowers 内置的 skills](https://oss.javaguide.cn/github/javaguide/ai/skills/superpowers-skills.png)
+
+Claude Code 这类工具会扫描项目里的.claude/skills/，再由模型根据当前任务判断是否激活。这个点和传统插件不太一样：很多插件是用户点一下才执行，Skills 往往是model-invoked，也就是模型自己判断“现在该读哪份经验包”。
+
+Anthropic 也维护了自己的[Skills 仓库](https://github.com/anthropics/skills)，可以作为目录结构和写法参考。
+
+第三方 Skills 的安全风险
+
+第三方 Skill 不能直接信。恶意SKILL.md可能诱导模型读取敏感文件、把数据发到外部服务，或者执行危险命令。企业场景里最好做内部审核，只允许使用经过审查的 Skill；本地个人使用，也建议先把正文读一遍。
+
+---
+## 为什么要延迟加载？
+Skills 最有价值的设计，不是“把提示词写进文件”，而是延迟加载。Agent 的上下文窗口不是垃圾桶，你把几十条规范、十几份 SOP、几百个工具说明全塞进去，看起来信息很全，实际模型容易被噪声淹没。更麻烦的是，排在上下文中间的内容经常被忽略，这就是大家常说的 Lost in the Middle 问题。
+
+渐进式披露的思路很简单：先让模型看到一份轻量目录，目录里只有 Skill 名称和两三句描述；等它判断当前任务需要某个 Skill，再加载完整正文。这个设计有点像查书——你不会一上来把整本书背进脑子里，而是先看目录，确定章节，再翻到具体页。Skill 的元数据就是目录，正文才是章节内容。
+
+![渐进式披露](https://oss.javaguide.cn/github/javaguide/ai/skills/skills-progressive-disclosure.svg)
+
+实际做的时候，我建议至少分两层：
+
+第一层是常驻元信息，每个 Skill 保留名称、description、典型触发词，尽量短。几十个 Skill 放在一起，也比把几十份正文全塞进去轻得多。第二层是按需正文，用户请求进来后，宿主先用元信息做粗筛，只把命中的SKILL.md正文拼进上下文，这样模型既知道“有哪些能力”，又不会被不相关流程拖慢。
+
+如果任务中途才暴露出新需求，还可以补充加载。比如一开始只是“帮我看看接口”，执行过程中发现涉及慢 SQL，那就把数据库审查相关 Skill 再追加进来。不过追加位置要小心，指令插在 Prompt 哪个位置，会影响模型到底看不看得见。如果要抽成一个通用调度器，建议拆成四块：注册中心维护元信息和向量，路由引擎负责召回与打分，加载器按需读取正文，上下文装配器决定最终拼到哪里。路由和加载最好解耦，这样改正文不会影响召回性能，换存储也不会动路由策略。
+
+---
+## Skill 路由怎么做？
+当 Skill 只有三五个时，靠模型读 description 判断就够了。数量上来以后，路由就会变成一个小型检索问题。先别急着把它想成完整 RAG。Skill 路由和 RAG 确实都要“先检索，再把内容放进上下文”，但目标不一样。RAG 通常是从大量外部知识里多召回几段，模型还能在生成时过滤一部分噪声；Skill 路由面对的是数量有限、结构稳定的指令集，最怕的是选错。选错 Skill，后面的执行路径可能整条跑偏。
+
+我的经验是，几十个 Skill 的规模，用一个轻量方案就够了。
+
+先把 Skill 的名称、description、典型 Query 样本向量化，存到内存里或轻量向量库。用户请求进来后，也做一次向量化，按余弦相似度取 top-5。这里不要一开始就追求选准，先把可能相关的捞上来。
+
+接着做一次精排。可以用轻量 rerank 模型，也可以先用规则：同一个词同时命中 title、description、examples 的优先级更高；安全类、数据库类这种高风险 Skill，宁可阈值高一点，别乱触发。
+
+最后一定要有“不选”的分支。如果最高分都很低，就走默认流程。Skill 路由里，“不选”经常比“硬选一个”更安全。
+
+![Skill 路由流程](https://oss.javaguide.cn/github/javaguide/ai/skills/skills-router.svg)
+
+这里有个冷启动问题很容易被忽略：新 Skill 没有历史 Query，description 又写得很虚，向量匹配就会飘。一个简单补救是加examples字段，把真实用户可能怎么问写进去。比如数据库审查 Skill 不只写“数据库访问审查”，还写“帮我看看这个查询为什么慢”“这个接口数据库会不会有 N+1 查询”。高并发场景下也别过度设计，几十个 Skill 用 NumPy 在内存里算相似度就够快，真正慢的通常是外部 embedding API。先做 Query 向量缓存，高频相似请求直接命中缓存，收益比一上来引入 FAISS 更实在。等 Skill 数量到几百上千，再考虑 ANN 索引或专门的向量数据库。
+
+---
+## 写 Skill 时最容易踩的坑？
+第一个坑，是把 Skill 当 README 写。
+
+README 写给人看，讲背景、安装、版本历史都没问题。Skill 写给 Agent 看，最重要的是可执行——它要告诉模型什么时候该用、按什么顺序做、哪些情况不能做、失败了怎么降级。其中 description 尤其关键，它不是一句宣传语，而是路由索引。像“分析系统日志”这种描述就太空了，模型不知道是分析 Nginx、JVM、Kubernetes，还是业务日志。更稳的写法可以这样：
+
+```yaml
+name: jvm-runtime-diagnosis
+description: Diagnose Spring Boot production runtime issues. Use when the user pastes Java stack traces, mentions OOM, Full GC, high CPU, slow APIs, or asks why a service is stuck.
+parameters:
+  input: { type: string, description: "错误日志、堆栈、监控摘要或 TraceId" }
+  output: { type: json, description: "诊断结果，包括根因、证据和下一步动作" }
+```
+这段 description 里有场景、有触发词，也有边界。模型看到“接口卡死”“频繁 Full GC”“粘了一段 Java 堆栈”，才更容易把它选出来。
+
+第二个坑，是 Skill 太大。比如“系统故障排查器”听上去很全，但里面如果同时塞 JVM、数据库、K8s、网关、消息队列，Agent 往往不知道先看哪条线。我更建议按排查维度拆：
+
+- jvm-metrics-analyzer：看 JVM 指标、GC、线程栈
+- distributed-trace-finder：根据 TraceId 追链路耗时
+- k8s-pod-event-viewer：看 Pod 状态、重启原因、事件记录
+
+拆细以后，路由也更容易判断。用户贴 GC 日志，就命中 JVM；用户给 TraceId，就命中链路追踪。少一点“全能”，多一点“明确”。
+
+第三个坑，是让 LLM 做不该它做的确定性工作。
+
+格式转换、精确计算、副作用操作，尽量交给脚本。LLM 负责读任务、提参数、解释结果，脚本负责真正的逻辑闭环。比如 CPU 异常排查，别让模型凭感觉猜哪个线程最耗时，直接让它调用脚本解析 top 线程和堆栈，再根据输出写判断。
+
+当然，也别把所有东西都脚本化。架构取舍、开放式分析、文案生成，这些仍然需要模型的弹性。边界大概是：算得准、改得动、会产生副作用的地方，交给脚本；需要综合判断的地方，让模型发挥。
+
+第四个坑，是把所有参考资料都塞进SKILL.md。更舒服的结构是让SKILL.md放主流程，references/放长文档，runbooks/放历史案例，Agent 真需要时再读附加资料，这样主文件轻，触发也更稳。
+
+```text
+java-troubleshooting/
+├── SKILL.md
+├── references/
+│   └── troubleshooting-guide.md
+└── runbooks/
+    ├── redis-timeout.md
+    └── full-gc-case.md
+```
+
+---
+## 总结
+MCP 负责把外部能力接进来，Skills 负责告诉 Agent 怎么把这些能力用起来。比如做一个数据库审查 Skill，底层可以先通过 MCP 读取 SQL 文件，再调用脚本跑静态检查，最后让模型按照团队规范生成 Review 意见。这里 MCP 解决的是“能不能接到外部系统”，Skills 解决的是“接进来之后按什么流程干活”。
+
+面试里可以这样解释：Prompt 是这一次请求里的指令，Function Calling 是模型发起结构化调用的方式，MCP 是外部系统和工具的接入协议，Skills 是一组可复用的任务处理经验。它们不在同一层，硬放在一起比大小没意义，组合起来才更接近一个完整 Agent 的工作方式。
+
+真写 Skill 的时候，别追求形式漂亮。很多时候，把边界和执行步骤写清楚，比在 Prompt 里反复强调“请严格按照规范执行”更有用。
+
+description 要写准，最好能包含适用场景、触发词和不该触发的边界。路由阶段只能先看这些元信息，写得太泛，Agent 就容易把不相关的任务也分过来。任务也别贪大，宁可拆成几个专精 Skill，也别写一个“什么都能干”的万能 Skill，后者看起来省事，实际更容易跑偏。
+
+正文内容可以按需加载。元数据放在前面，让 Agent 先判断要不要用；真正命中之后，再读取完整说明。否则一上来就把大量正文塞进上下文，成本高不说，还会干扰模型判断。格式转换、计算、文件写入这类确定性操作，尽量交给脚本处理，别让模型临场发挥。模型适合做判断和表达，脚本适合做稳定执行。
+
+还有一个容易被忽略的点：第三方 Skill 不能直接拿来就用。恶意的SKILL.md是真实风险，里面可能夹带越权读取、泄露信息、误导模型执行危险操作的指令。个人测试可以粗一点，但企业场景里，Skill 至少要走一遍内部审核，确认它的权限边界、脚本行为和外部依赖都可控。

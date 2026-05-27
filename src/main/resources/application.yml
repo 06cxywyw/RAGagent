@@ -1,0 +1,10 @@
+spring:
+  application:
+    name: rag-standalone
+  profiles:
+    active: dev
+
+server:
+  port: 8123
+  servlet:
+    context-path:

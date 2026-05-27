@@ -1,0 +1,51 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ai_agent
+    username: postgres
+    password: 123456
+  ai:
+    dashscope:
+      api-key: sk-28ca1d3ecb7241f09bdb9f1d20c08eae  # rerank(gte-rerank) / query_rewrite(qwen-turbo) / embedding(v2)
+      chat:
+        options:
+          model: qwen-turbo            # ← 查询重写(QueryRewriter)专用。轻量快速，每改约280token
+      embedding:
+        options:
+          model: text-embedding-v2     # ← RAG 入库+检索用的 embedding 模型
+
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        dimensions: 1536
+        distance-type: COSINE_DISTANCE
+
+  data:
+    redis:
+      host: 192.168.88.130
+      port: 6379
+      password: 123456
+      database: 0
+
+security:
+  api-keys:
+    search-api-key: rnjSg6UL7fzXjaAZqnc3xMP8
+
+dashscope:
+  rerank:
+    model: qwen3-rerank     # ← 重排序模型，默认 gte-rerank
+
+rag:
+  monitor:
+    enabled: true
+    check-interval: 300000
+    min-doc-count: 10
+
+# 对话 LLM（AiController.ragChat 专用，支持 OpenAI 兼容接口）
+# 查询重写用的是上面 dashscope.chat 的模型，不要改这里
+custom:
+  admin:
+    password: admin123
+  llm:
+    api-key: sk-5LLH1H2B9VRXKovWvMLnwuzEeppQqluP
+    url: https://token.sensenova.cn/v1
+    model: deepseek-v4-flash
