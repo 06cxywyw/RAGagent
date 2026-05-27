@@ -43,10 +43,10 @@ Thumbs.db
 .env
 .env.*
 !.env.example
-application-local.yml
-application-local.yaml
-application-*.local.yml
-application-*.local.yaml
+application-dev.yml
+application-dev.yaml
+application-*.prod.yml
+application-*.prod.yaml
 *.pem
 *.key
 *.p12
@@ -61,3 +61,6 @@ temp/
 
 # Generated evaluation/output files
 result*.json
+
+# Local knowledge base documents
+/src/main/resources/document/
